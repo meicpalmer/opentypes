@@ -1,0 +1,45 @@
+name: opentypes
+version: 0.0.1
+cabal-version: >=1.2
+build-type: Simple
+license: BSD3
+license-file: ""
+maintainer: Michael J. Palmer
+stability: experimental
+bug-reports: meicpalmer@gmail.com
+synopsis: Open Types Framework
+description: A simple interface and set of Template Haskell macros for encoding open types in Haskell as a solution to the Expression Problem.
+author: Michael J. Palmer
+data-dir: ""
+ 
+library
+    build-depends: QuickCheck -any, base -any, containers -any,
+                   template-haskell ==2.8.0.0
+    exposed-modules: OpenTypes.Finalization OpenTypes.Interface
+                     OpenTypes.WrapConstructors
+    exposed: True
+    buildable: True
+    hs-source-dirs: src
+    other-modules: OpenTypes.Test.TwoParam OpenTypes.Test.OpenInterface
+                   OpenTypes.Test.Fragment2 OpenTypes.Test.Fragment1
+ 
+executable opentypes
+    build-depends: QuickCheck -any, base -any, containers -any,
+                   template-haskell ==2.8.0.0
+    main-is: Main.hs
+    buildable: True
+    hs-source-dirs: src
+    other-modules: OpenTypes.Test.TwoParam OpenTypes.Test.OpenInterface
+                   OpenTypes.Test.Fragment2 OpenTypes.Test.Fragment1
+ 
+test-suite test-opentypes
+    build-depends: QuickCheck -any, base -any, containers -any,
+                   template-haskell ==2.8.0.0
+    type: exitcode-stdio-1.0
+    main-is: Main.hs
+    buildable: True
+    hs-source-dirs: src
+    other-modules: OpenTypes.WrapConstructors OpenTypes.Interface
+                   OpenTypes.Finalization OpenTypes.Test.TwoParam
+                   OpenTypes.Test.OpenInterface OpenTypes.Test.Fragment2
+                   OpenTypes.Test.Fragment1

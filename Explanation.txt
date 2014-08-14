@@ -1,0 +1,152 @@
+Open Types and the Expression Problem:
+
+The "expression problem" refers to a challenging problem in programming language design.  Many modern programming languages have ways to describe data types that can have multiple representations at run time, along with functions that operate over each of these run-time cases.  Users of a library may want to extend the library's functionality in two orthogonal ways:
+
+Case-Extension: They may want to add new run-time representations to a data type and corresponding cases to the functions that operate over that data type.
+Operation-Extension: They may want to add new functions that operate over existing data-types.
+
+In functional languages like Haskell and the ML family, operation extension is trivially easy - just write a new function with pattern-matches over the cases of an algebraic data type.  Adding new cases to an ADT and the existing functions that operate over it, however, requires editing the source code for the ADT and all of the functions that operate over it.
+
+Conversely, in object-oriented languages such as Java, case-extension is easy - just write a new class that implements an interface.  However, operation-extension requires editing the source code of the interface and all of the classes that implement it.
+
+The challenge of the expression problem is to allow extension in both of these dimensions without requiring repeated code or recompiling existing code. There are other issues that complicate the problem:
+
+Recursion: Types and functions can recursively refer to themselves.  A solution to the expression problem needs to work for recursive functions and types.
+Dependencies: Types can refer to other types, and functions can refer to other functions.  A solution to the expression problem needs to track these dependencies.  These dependencies can be mutually-recursive.
+Defaults: Some functions may have default outputs for cases that don't have a more specific definition.  A solution to the expression problem needs a way to define defaults without violating the DRY principle and without leading to unresolvable conflicts between multiple definitions of defaults.
+Filling Gaps:  Suppose a programmer imports two extensions to a library.  One of these extensions adds a new case to a datatype, while the other defines a new function that operates over that type.  Neither of these extensions "know" about the other (e.g. they were written by different people or organizations) - they only know about the original library they're extending.  The programmer should be able to write a definition for the missing function/case combination, without having to rely on defaults or modify any of the libraries in question.
+Multiple-Parameter Functions:  Many functions take more than one parameter, so we need to be able to extend functions when the types of more than one of their parameters have been extended.
+
+
+Open Types:
+
+This solution makes use of the concept of an "open type."  A typical ADT in Haskell is a "closed type" - all of its constructors are defined in one module.  An open type is a type that can have extra constructors defined in other modules, including modules written by library-consumers.
+
+Haskell, of course, has no direct concept of an open type.  However, it turns out that a GHC extension, Type Families, has a way to represent types whose concrete definitions can be *deferred to another module.*  This can be represented by either a type-family or data-family with *zero parameters.*  For our purposes, we will be using data-families rather than type-families, because type-families have some restrictions on where they can appear that data families do not have.
+
+    module ExprInterface where
+    data family Expr
+	
+	--------------
+	
+	module Module1 where
+	import ExprInterface (Expr)
+	
+	data instance Expr =
+        Lit Int
+      | Add Expr Expr
+      | Neg Expr
+      | Mult Expr Expr
+      | Sub Expr Expr
+    
+So far, this does not appear particularly useful.  It's just a closed type with the signature and implementation split into two parts.  To make a useful encoding of open types, we need another concept - a fragmentary type.  A fragmentary type is an ADT containing one or more constructors that are intended to be included in an open type.  An example:
+
+    module Module2 where
+	import ExprInterface (Expr)
+	
+	data ExprFragment1 =
+        Lit Int
+      | Add Expr Expr
+	  | Neg Expr
+	  
+Notice that some of the constructors refer to Expr.  The usefulness of this will become apparent shortly.
+
+Modules can define fragmentary types intended for the same open type without knowing about any other module's fragmentary types.  They would only need to know about (i.e. import) the definition of the nullary data family.
+
+    module Module3 where
+    import ExprInterface (Expr)
+	
+	data ExprFragment2 =
+        Mult Expr Expr
+      | Sub Expr Expr
+      
+Now, when the programmer wishes to define the instance for the nullary data family, they can include the fragments they want in a trivial manner:
+
+    module Module4 where
+    import ExprInterface (Expr)
+    import Module2 (ExprFragment1)
+    import Module3 (ExprFragment2)
+    
+    data instance Expr =
+        Wrap1 ExprFragment1
+      | Wrap2 ExprFragment2
+      
+Since ExprFragment1 and ExprFragment2 both refer to Expr in their definitions, the resulting definition of Expr is indirectly recursive with itself.  The result is a type which is roughly equivalent to the directly-recursive version of Expr defined in Module1 above.
+
+So far, this splits the definitions of the types into a nullary data family, an arbitrary amount of fragments, and a combining instance definition.  Furthermore, once the combining instance definition is introduced, the type is still, essentially, a closed type.  What, then, is the point of all this?
+
+The combining instance definition is not necessary for libraries.  It is only necessary for programs with a Main module.  Both the initial library author and extension authors can omit it entirely, or include ready-made versions in a small, separate module intended to only be imported by the Main module of a program written by a library consumer - extension authors would be able to easily avoid importing this module.  It is also important to introduce a caveat - including a combining instance in the same module as a fragment effectively ruins that fragment for future extension authors.  It would force them to choose between closing the type and omitting that fragment.  
+
+
+Wrapping Constructors of Fragmentary Types:
+
+Constructing values for open types presents a problem, which can fortunately be solved straightforwardly with a single typeclass.  The problem is that the constructors of fragmentary types do not return values of the open type - they return values of the fragmentary type.  Using the open type encoding described so far, converting them to open types would require using the specific constructor from the open type's combining instance definition - which implies that it is no longer an open type.
+
+To solve this problem, we introduce a typeclass called Wrap with the following definition:
+
+  class Wrap a b | a -> b where
+    wrap :: a -> b
+    
+When the combining instance of an open type is defined, a Wrap instance should be defined for each fragmentary type, whose wrap function corresponds to the one-argument constructor that wraps the value.
+  instance Wrap ExprFragment1 Expr where
+    wrap = Wrap1
+    
+What's important, however, is that fragmentary-type constructors can be Wrapped in modules where the representation of their open type is not known.  The wrap function can simply be prepended to constructors.  Their use in an expression necessitates that a Wrap constraint be added to the definition where the expression occurs.  Example:
+
+  three :: Wrap ExprFragment1 Expr => Expr
+  three = wrap $ Lit 3
+  
+Notice that the constraint "Wrap ExprFragment1 Expr" contains no type variables.  GHC requires the FlexibleContexts extension to recognize this as valid code.  This constraint represents an assumption that "Wrap ExprFragment1 Expr" will eventually be defined by some other module, and that module is either the Main module itself or a module the Main module imports.
+
+Multiple Wrap constraints for multiple fragments of the same open type indicate that the function or value with these constraints "knows about" the fragmentary types in question, and is constructing values that depend upon their constructors.  
+
+
+Operations Over Open Types:
+
+An important observation to make is that Haskell's type classes solve a lot of the same problems as the Expression Problem, but in the realm of compile-time dispatch rather than run-time dispatch.  Even so, type classes will prove useful for defining operations over open types.  The open types described so far are divided into fragments that have distinct types at compile time.  Instances can be defined for each fragment, or combination of fragments for multi-parameter functions.  Examples:
+
+    module EvalInterface where
+      class Eval a where
+        eval :: a -> Int
+    
+    module Module5 where
+    import ExprInterface
+    import EvalInterface
+    import Module2
+    
+    instance Eval Expr => Eval ExprFragment1 where
+      eval (Lit i) = i
+      eval (Add a b) = eval a + eval b
+      eval (Neg a) = - eval a
+      
+     -- The definition of an instance for ExprFragment2 is not shown here      
+      
+One thing stands out as peculiar about this instance - the "Eval Expr" constraint.  Once again, this constraint contains no type variables, so it represents the *assumption* that an instance Eval Expr will be defined at some point.  The instance itself is trivial but repetitive to write.  In the example we are examining here, there is only one open-typed parameter of the function to be concerned with.  For the eval function, a case is needed for every constructor in the combining instance of Expr - the extracted value is simply passed to a call to the "eval" function, which is statically-dispatched according to Haskell's type class system.
+  
+    module Module4 where
+    ----------
+    instance Eval Expr where
+      eval (Wrap1 a) = eval a
+      eval (Wrap2 a) = eval a
+      
+For operations that operate on multiple parameters with open types, we need a type class with multiple parameters - one parameter for each open-typed parameter in the operation to be defined.  This is necessary even if the parameters would appear to have the same type if only open types were considered - this is because the function will need to operate over all combinations of *fragments,* which are distinct static types.
+
+There are some important predefined typeclasses - Eq in particular - which have a single type parameter, but define operations with multiple parameters.  However, there is a simple workaround - define a multi-parameter typeclass and use it as described in the paragraph above, and include an instance of the single-parameter class for the open type which simply calls the corresponding function in the multi-parameter class.
+
+   class Eq2 a b where
+     eq2 :: a -> b -> Bool
+     eq2 a b = False
+     
+   instance Eq2 Expr Expr => Eq Expr where
+     (==) a b = eq2 a b
+   
+   -----------------
+     
+   instance Eq2 Expr Expr => Eq2 ExprFragment1 ExprFragment1 where
+     ....
+
+   instance Eq2 ExprFragment1 ExprFragment2    -- Use the default defined in the typeclass  
+     
+   ------------------
+   instance Eq2 Expr Expr where      -- Write the dispatching instance here once the representation of Expr is fixed
+     .........
