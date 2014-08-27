@@ -9,6 +9,8 @@ In functional languages like Haskell and the ML family, operation extension is t
 
 Conversely, in object-oriented languages such as Java, case-extension is easy - just write a new class that implements an interface.  However, operation-extension requires editing the source code of the interface and all of the classes that implement it.
 
+Both the functional and object-oriented paradigms have design-patterns that allow them to switch to the "other side" of the expression problem.  For example, OO languages can use the Visitor Pattern, which allows easy definition of new operations but difficult definition of new data types.  Functional languages can use records of closures to emulate object-oriented interfaces, with "classes" simply being functions that construct values of these record types.  As in OO languages, this allows extensibility for new "data types", but the set of operations over them is fixed by the record type's fields.
+
 The challenge of the expression problem is to allow extension in both of these dimensions without requiring repeated code or recompiling existing code. There are other issues that complicate the problem:
 
 Recursion: Types and functions can recursively refer to themselves.  A solution to the expression problem needs to work for recursive functions and types.
@@ -20,7 +22,16 @@ Multiple-Parameter Functions:  Many functions take more than one parameter, so w
 
 Open Types:
 
-This solution makes use of the concept of an "open type."  A typical ADT in Haskell is a "closed type" - all of its constructors are defined in one module.  An open type is a type that can have extra constructors defined in other modules, including modules written by library-consumers.
+This solution makes use of the concept of an "open type."  A typical ADT in Haskell is a "closed type" - all of its constructors are defined in one module.  Example:
+
+  	data Expr =
+        Lit Int
+      | Add Expr Expr
+      | Neg Expr
+      | Mult Expr Expr
+      | Sub Expr Expr
+
+An open type is a type that can have extra constructors defined in other modules, including modules written by library-consumers.
 
 Haskell, of course, has no direct concept of an open type.  However, it turns out that a GHC extension, Type Families, has a way to represent types whose concrete definitions can be *deferred to another module.*  This can be represented by either a type-family or data-family with *zero parameters.*  For our purposes, we will be using data-families rather than type-families, because type-families have some restrictions on where they can appear that data families do not have.
 
@@ -71,12 +82,11 @@ Now, when the programmer wishes to define the instance for the nullary data fami
         Wrap1 ExprFragment1
       | Wrap2 ExprFragment2
       
-Since ExprFragment1 and ExprFragment2 both refer to Expr in their definitions, the resulting definition of Expr is indirectly recursive with itself.  The result is a type which is roughly equivalent to the directly-recursive version of Expr defined in Module1 above.
+Since ExprFragment1 and ExprFragment2 both refer to Expr in their definitions, the resulting definition of Expr is indirectly recursive with itself.  The result is a type which is roughly equivalent to the first example definition of Expr above.
 
 So far, this splits the definitions of the types into a nullary data family, an arbitrary amount of fragments, and a combining instance definition.  Furthermore, once the combining instance definition is introduced, the type is still, essentially, a closed type.  What, then, is the point of all this?
 
-The combining instance definition is not necessary for libraries.  It is only necessary for programs with a Main module.  Both the initial library author and extension authors can omit it entirely, or include ready-made versions in a small, separate module intended to only be imported by the Main module of a program written by a library consumer - extension authors would be able to easily avoid importing this module.  It is also important to introduce a caveat - including a combining instance in the same module as a fragment effectively ruins that fragment for future extension authors.  It would force them to choose between closing the type and omitting that fragment.  
-
+It is important to note that this encoding of open types is similar to the one presented in the paper "Data Types a la Carte" by Wouter Swierstra.  However, in that formulation, the fragmentary types represent the recursive open type using a type variable.  When open types need to refer to other open types (for example, if writing an open Definition type which depends on an open Expression type), they need to introduce a new type variable for each open type they need to refer to.  Furthermore, ordinary closed types that need to refer to open types would need to introduce a type variable for each open type they need to refer to.  This can quickly become hairy when many open types are involved.  This encoding with nullary data families avoids these problems.  I was initially working on writing macros for a variable-based encoding, but stumbling upon this solution with nullary data families made writing these macros much easier.  
 
 Wrapping Constructors of Fragmentary Types:
 
@@ -129,7 +139,7 @@ One thing stands out as peculiar about this instance - the "Eval Expr" constrain
       eval (Wrap1 a) = eval a
       eval (Wrap2 a) = eval a
       
-For operations that operate on multiple parameters with open types, we need a type class with multiple parameters - one parameter for each open-typed parameter in the operation to be defined.  This is necessary even if the parameters would appear to have the same type if only open types were considered - this is because the function will need to operate over all combinations of *fragments,* which are distinct static types.
+For operations that operate on multiple parameters with open types, we need a type class with multiple parameters - one parameter for each open-typed parameter in the operation to be defined.  This is necessary even if the parameters would appear to have the same type if only open types were considered - this is because the function will need to operate over all combinations of *fragments,* which are distinct static types.  However, when an open type is used for the *output* of a function, it does not need to be parameterized - the open type itself will suffice.
 
 There are some important predefined typeclasses - Eq in particular - which have a single type parameter, but define operations with multiple parameters.  However, there is a simple workaround - define a multi-parameter typeclass and use it as described in the paragraph above, and include an instance of the single-parameter class for the open type which simply calls the corresponding function in the multi-parameter class.
 
@@ -150,3 +160,115 @@ There are some important predefined typeclasses - Eq in particular - which have 
    ------------------
    instance Eq2 Expr Expr where      -- Write the dispatching instance here once the representation of Expr is fixed
      .........
+     
+Notice that Eq2 defines a default case for eq2.  We can reuse the typeclass system's default mechanism to define "global defaults" for operations over open types.  Another kind of default - the "local default" - can be defined in the instances for the fragmentary types, but this default would only apply to the fragmentary types the instance operates on.  
+
+
+Macros to Automate Repetitive Code:
+
+Combining instances, wrap instances, and dispatch instances can become repetitive to write.  I have written a series of Template Haskell macros to automate generating them.  These macros depend upon a slightly different formulation of the Wrap class than the one presented above:
+
+  type family OpenSuper t
+  
+  class Wrap a where
+    wrap :: a -> OpenSuper a
+    
+The second type parameter is moved into the OpenSuper type family so that the modules that define fragment types can define the fragment/open type relation without having to define the Wrap instance.  
+
+The "finalize" macro uses the OpenSuper family to automatically find all known fragmentary types for a given open type, and use this information to generate the combining instance for the open type and Wrap instances for all of its fragment types.
+
+  finalize ''Expr
+  
+The "genInstance" macro takes one or more typeclass instance declarations with type signatures (but not implementations) for the functions to be generated.  It then generates dispatching functions for these functions.
+  genInstance [d|
+    instance Eval Expr where
+      eval :: Expr -> Int
+    |]
+    
+The "wrapCons" macro operates on a fragmentary type, and generates lowercase-named functions corresponding to each data constructor.  These functions simply call "wrap" on their respective constructor call.  The macro also generates explicit type signatures that contain the necessary Wrap constraint.
+
+  wrapCons ''ExprFragment1
+  
+  --- generates ---
+  
+  lit :: Wrap ExprFragment1 => Int -> Expr
+  lit i = wrap $ Lit i
+  
+  add :: Wrap ExprFragment1 => Expr -> Expr -> Expr
+  add a b = wrap $ Add a b
+  
+  neg :: Wrap ExprFragment1 => Expr -> Expr
+  neg a = wrap $ Neg a
+  
+Solving the "Deserialization Problem":
+
+The deserialization problem is related to the expression problem in that it concerns the definition of extensible functions that output open types, but do not take any open types for their inputs.  With an extensible Expr type, for example, one may also desire an extensible parser, such that libraries that extend Expr can also extend the parser while reusing components from the old parser.  In particular, parsers for specific kinds of expressions may recursively call the parser for expressions in general.  Fortunately, we can use a type-class trick to declare an interface for a function or value in one module and define its implementation in another.  For example:
+
+  class Parse a where
+    parser :: Parser a
+    
+  parseExpr :: Parse Expr => Parser Expr
+  parseExpr = parser :: Parser Expr
+    
+    
+  -- another module --
+  parseIfThenElse :: Parse Expr => Parser Expr
+  parseIfThenElse = do
+    reserved "if"
+    cond <- parseExpr
+    reserved "then"
+    truebranch <- parseExpr
+    reserved "else"
+    falsebranch <- parseExpr
+    return $ ifThenElse cond truebranch falsebranch
+    
+  -- a module that defines or imports a finalization of Expr --
+  
+  class Parse Expr where
+    parser = parseBool <|> parseIfThenElse <|> ... 
+    
+  Of course, this sort of thing can be expressed slightly more succinctly with the NullaryTypeClasses extension, but my compiler (GHC 7.6.3) does not appear to support it.
+  
+  I do not have any macros to automatically generate combining functions like this, because it depends on the intended result, and in some cases may depend upon the order in which the functions are combined.  
+  
+Limitations:
+
+First, this approach cannot generate wrapped versions of record constructors with record syntax.  However, the wrap function can be called directly on the record expression.  Example:
+ 
+  wrap $ Rectangle {width = 100, height = 200}
+  
+
+Second, under this approach, it is not possible to directly pattern-match on multiple layers of open types (if that is the correct terminology).  For example, this is not valid:
+  
+  instance SomeOp Expr => SomeOp ExprFragment1 where
+    someOp (Add (Lit a) (Lit b)) = ...
+    
+The above does not work because the two fields of Add have type Expr, whose representation is not yet known.
+    
+One workaround is to separate the open operation into multiple open operations.  For example:
+
+  instance (SomeOp Expr, SomeOpAddCase Expr) => SomeOp ExprFragment1 where
+    someOp (Add a b) = someOpAddCase a b
+    ...
+    
+  instance SomeOpAddCase ExprFragment1 ExprFragment1 where
+    someOpAddCase (Lit a) (Lit b) = ....
+    
+This representation is somewhat verbose, but preserves the openness of the more specific branches of the operation when desired.
+
+However, sometimes we don't need to do that and would prefer to simply match over constructors for a particular fragment while supplying a default case for constructors in all other fragments.  (For example, this is how Scala's pattern matching works on types that are not "sealed" - a default is required, or else the compiler issues a warning about inexhaustive pattern matching.)  
+
+For this purpose, a function called "partial" is also defined in the Wrap class, with the following signature:
+
+    partial :: (a -> out) -> (OpenSuper a -> out) -> out
+    
+The partial function can take a function that matches over a particular fragment, followed by a fallback function that operates on the open type itself which is called for values that do not fit in that fragment.  Of course, the fallback itself may be a call to partial on another fragmentary type.  While this function may be convenient in some cases, it has no way to indicate that it has already covered a fragment.
+
+
+Caveats:
+
+It is important to be very careful about which module the finalizing instance of an open type is defined in.  The problem is that code is only polymorphic over all valid finalizations of an open type if no finalizing instances of that type are visible in that module.  If a finalizing instance ends up in scope in a module, all of its functions that operate on that open type are necessarily fixed to operate on that specific instance only, even if their internal logic does not require this.  Anyone who wants to use these functions with a different finalization of the open types in question would have to rewrite their own versions.  Complicating this problem is the fact that all open types must have finalizing instances visible in the Main module in order for a program to even be able to run.  Of course, this problem can be avoided by structuring the library in such a way that its useful functions are all written in modules that do not define or import any finalizing instances, such that main functions can be written in simple one-liners composed of these functions.
+
+I am considering a variant of this encoding of open types in which the data families representing the open types have a single parameter instead of being nullary.  The parameter would be a phantom type that represents a finalization of one or more open types (for sets of open types that depend on each other, it is important that all of them define an instance for the same phantom type).  The fragmentary types would also add a single type parameter, which they would pass on to their calls to the data families representing open types.  Under this approach, it would still be possible to write code that only works for a specific finalization.  However, it would be more obvious when this is the case - the name of a specific finalization would appear in the types of the functions or values in question.  Furthermore, the main function will still need to be monomorphic for a specific finalization, as would any function that uses open types internally but does not have any open types in its inputs or output.  
+
+There are tradeoffs between the nullary encoding and the single-parameter encoding.  The single-parameter encoding would be slightly more verbose, but it would allow polymorphic and non-polymorphic code to appear in the same module (which is not much of a benefit) and make it easier to avoid accidentally making one's code non-polymorphic.  

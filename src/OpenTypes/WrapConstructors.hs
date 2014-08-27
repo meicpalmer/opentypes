@@ -31,6 +31,13 @@ wrapconstraint t = ClassP ''Wrap t
 
 makeArbitraryParams list = mapM (\i -> newName "p") list
 
+-- | This macro takes the name of a data type as its parameter.
+-- It generates functions whose names are lower-case versions of the names of its
+-- data constructors, and the same parameter types.  These functions simply call
+-- "wrap" on a value constructed from the corresponding constructor.  The functions
+-- also have an explicit "Wrap X" constraint in their type signatures, where X is the
+-- name of the type passed to this macro.  This Wrap constraint indicates the assumption
+-- that the Wrap instance in question will be defined at some point in some other module.
 wrapCons dataname = do
   info <- reify dataname
   case info of

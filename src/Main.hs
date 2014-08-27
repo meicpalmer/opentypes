@@ -42,4 +42,5 @@ ex = mult (lit 2) (add (lit 1) (lit 2))
 main = do
   print (eval ex)
   print (ex == ex)
-  print (ex == mult (lit 2) (add (lit 2) (lit 2)))
+  print (ex == mult (lit 2) (add (lit 1) (lit 2)))
+  print (ex == mult (lit 2) (add (lit 1) (lit 3)))

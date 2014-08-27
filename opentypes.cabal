@@ -15,8 +15,8 @@ data-dir: ""
 library
     build-depends: QuickCheck -any, base -any, containers -any,
                    template-haskell ==2.8.0.0
-    exposed-modules: OpenTypes.Finalization OpenTypes.Interface
-                     OpenTypes.WrapConstructors
+    exposed-modules: OpenTypes.Test.BadModule OpenTypes.Finalization
+                     OpenTypes.Interface OpenTypes.WrapConstructors
     exposed: True
     buildable: True
     hs-source-dirs: src
@@ -29,8 +29,9 @@ executable opentypes
     main-is: Main.hs
     buildable: True
     hs-source-dirs: src
-    other-modules: OpenTypes.Test.TwoParam OpenTypes.Test.OpenInterface
-                   OpenTypes.Test.Fragment2 OpenTypes.Test.Fragment1
+    other-modules: OpenTypes.Test.BadModule OpenTypes.Test.TwoParam
+                   OpenTypes.Test.OpenInterface OpenTypes.Test.Fragment2
+                   OpenTypes.Test.Fragment1
  
 test-suite test-opentypes
     build-depends: QuickCheck -any, base -any, containers -any,

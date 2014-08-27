@@ -68,7 +68,14 @@ makeConstructorName t = let
     Just m -> concat [m, "__", nameBase fname]
     Nothing -> nameBase fname
 
-
+-- | The "finalize" macro takes the name of a nullary data family as its parameter.
+-- It then searches for all imported instances of the "OpenSuper" type family to
+-- detect the types for which OpenSuper outputs this nullary data family.  It then
+-- generates a data instance for the nullary data family which contains a single-argument
+-- constructor for each of these types.  It also generates a Wrap instance for each type.
+-- This macro should only be called in a module that a library-extension author can easily
+-- avoid importing.  Otherwise, it will fix the representation of the nullary data family in question
+-- and the library-extension author will not be able to extend the type.
 finalize name = do
   info <- reify name
   case info of
@@ -155,6 +162,15 @@ genOneInstance instancedec = case instancedec of
     return $ InstanceD ctx t newdecs
   other -> fail $ (pprint other) ++ " is not an instance declaration."
 
+-- | This macro takes one or more instance declarations (enclosed in a [d| .. |] splice)
+-- which contain at least one type parameter that is an "open type" (i.e. nullary data class)
+-- whose instance has already been generated via the "finalize" macro.  These instance declarations
+-- need to have signatures, but not implementations, for the functions to be generated.
+-- For each function, the macro will generate clauses to pattern-match over all of the possible
+-- combinations of one-argument constructors defined in the nullary data families' instances
+-- and pass these extracted values, along with the other parameters, to the identically-named
+-- function in the type class.  It assumes that all of the necessary typeclass instances
+-- have already been written and imported.
 genInstance instancedecs = do
   decs <- instancedecs
   mapM genOneInstance decs
