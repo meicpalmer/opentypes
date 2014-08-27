@@ -24,7 +24,7 @@ Open Types:
 
 This solution makes use of the concept of an "open type."  A typical ADT in Haskell is a "closed type" - all of its constructors are defined in one module.  Example:
 
-  	data Expr =
+    data Expr =
         Lit Int
       | Add Expr Expr
       | Neg Expr
@@ -40,10 +40,10 @@ Haskell, of course, has no direct concept of an open type.  However, it turns ou
 	
 	--------------
 	
-	module Module1 where
-	import ExprInterface (Expr)
+    module Module1 where
+    import ExprInterface (Expr)
 	
-	data instance Expr =
+    data instance Expr =
         Lit Int
       | Add Expr Expr
       | Neg Expr
@@ -53,12 +53,12 @@ Haskell, of course, has no direct concept of an open type.  However, it turns ou
 So far, this does not appear particularly useful.  It's just a closed type with the signature and implementation split into two parts.  To make a useful encoding of open types, we need another concept - a fragmentary type.  A fragmentary type is an ADT containing one or more constructors that are intended to be included in an open type.  An example:
 
     module Module2 where
-	import ExprInterface (Expr)
+    import ExprInterface (Expr)
 	
-	data ExprFragment1 =
+    data ExprFragment1 =
         Lit Int
       | Add Expr Expr
-	  | Neg Expr
+      | Neg Expr
 	  
 Notice that some of the constructors refer to Expr.  The usefulness of this will become apparent shortly.
 
@@ -67,7 +67,7 @@ Modules can define fragmentary types intended for the same open type without kno
     module Module3 where
     import ExprInterface (Expr)
 	
-	data ExprFragment2 =
+    data ExprFragment2 =
         Mult Expr Expr
       | Sub Expr Expr
       
